@@ -55,7 +55,7 @@ app.get('/health', (req, res) => {
 
 // PDF generation endpoint
 app.post('/api/generate-pdf', async (req, res) => {
-  const { html, options = {} } = req.body;
+  const { html, options = {}, baseUrl } = req.body;
 
   if (!html) {
     return res.status(400).json({ error: 'HTML content is required' });
@@ -67,9 +67,10 @@ app.post('/api/generate-pdf', async (req, res) => {
   try {
     const page = await browser.newPage();
     
-    // Set content
+    // Set content with base URL for relative image paths
     await page.setContent(html, {
-      waitUntil: 'networkidle0',
+      url: baseUrl || 'about:blank',
+      waitUntil: ['networkidle0', 'load', 'domcontentloaded'],
       timeout: 30000
     });
 
@@ -160,6 +161,7 @@ app.get('/', (req, res) => {
         url: '/api/generate-pdf',
         body: {
           html: '<html><body><h1>Hello World</h1></body></html>',
+          baseUrl: 'https://your-domain.com',
           options: {
             format: 'A4',
             printBackground: true,
