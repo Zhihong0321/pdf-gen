@@ -35,6 +35,16 @@ if (!fs.existsSync(PDF_DIR)) {
 // Launch browser once and reuse
 let browser;
 
+// Debug: Store last request for troubleshooting
+let lastRequest = {
+  timestamp: null,
+  html: null,
+  baseUrl: null,
+  htmlLength: 0,
+  hasImages: false,
+  imageTags: []
+};
+
 async function initBrowser() {
   const isProduction = process.env.RAILWAY_ENVIRONMENT !== undefined;
   
@@ -72,6 +82,27 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Debug endpoint to view last request
+app.get('/api/debug/last-request', (req, res) => {
+  if (!lastRequest.timestamp) {
+    return res.json({
+      message: 'No PDF requests received yet'
+    });
+  }
+
+  res.json({
+    lastRequest: {
+      timestamp: lastRequest.timestamp,
+      htmlLength: lastRequest.htmlLength,
+      baseUrl: lastRequest.baseUrl,
+      hasImages: lastRequest.hasImages,
+      imageTags: lastRequest.imageTags,
+      htmlPreview: lastRequest.html.substring(0, 1000) + '...' // First 1000 chars
+    },
+    note: 'Full HTML is truncated for display. Check server logs for complete details.'
+  });
+});
+
 // PDF generation endpoint
 app.post('/api/generate-pdf', async (req, res) => {
   const { html, options = {}, baseUrl } = req.body;
@@ -80,17 +111,65 @@ app.post('/api/generate-pdf', async (req, res) => {
     return res.status(400).json({ error: 'HTML content is required' });
   }
 
+  // Debug: Store last request details
+  lastRequest = {
+    timestamp: new Date().toISOString(),
+    html: html,
+    baseUrl: baseUrl,
+    htmlLength: html.length,
+    hasImages: html.includes('<img'),
+    imageTags: html.match(/<img[^>]+>/g) || []
+  };
+
+  console.log('\n=== PDF Generation Request ===');
+  console.log('Time:', lastRequest.timestamp);
+  console.log('HTML Length:', lastRequest.htmlLength, 'characters');
+  console.log('Base URL:', lastRequest.baseUrl || 'NOT PROVIDED');
+  console.log('Has Images:', lastRequest.hasImages);
+  console.log('Image Tags Found:', lastRequest.imageTags.length);
+  if (lastRequest.imageTags.length > 0) {
+    lastRequest.imageTags.forEach((tag, i) => {
+      console.log(`  Image ${i + 1}:`, tag);
+    });
+  }
+
   const pdfId = uuidv4();
   const pdfPath = path.join(PDF_DIR, `${pdfId}.pdf`);
 
   try {
     const page = await browser.newPage();
     
+    // Enable console/error logging from the page
+    page.on('console', msg => console.log('Browser Console:', msg.text()));
+    page.on('pageerror', error => console.error('Browser Error:', error.message));
+    
     // Set content with base URL for relative image paths
     await page.setContent(html, {
       url: baseUrl || 'about:blank',
       waitUntil: ['networkidle0', 'load', 'domcontentloaded'],
       timeout: 30000
+    });
+
+    // Debug: Check if images loaded
+    const imagesLoaded = await page.evaluate(() => {
+      const images = Array.from(document.querySelectorAll('img'));
+      return images.map(img => ({
+        src: img.src,
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        complete: img.complete,
+        error: img.error ? 'FAILED' : 'OK'
+      }));
+    });
+    
+    console.log('\n=== Image Load Status ===');
+    console.log('Total Images:', imagesLoaded.length);
+    imagesLoaded.forEach((img, i) => {
+      console.log(`  Image ${i + 1}:`);
+      console.log(`    src: ${img.src}`);
+      console.log(`    Dimensions: ${img.naturalWidth}x${img.naturalHeight}`);
+      console.log(`    Complete: ${img.complete}`);
+      console.log(`    Status: ${img.error}`);
     });
 
     // PDF generation options
@@ -171,6 +250,7 @@ app.get('/', (req, res) => {
     message: 'PDF Generator API',
     endpoints: {
       health: 'GET /health',
+      debug: 'GET /api/debug/last-request',
       generate: 'POST /api/generate-pdf',
       download: 'GET /api/download/:pdfId'
     },
