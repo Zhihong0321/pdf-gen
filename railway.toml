@@ -3,5 +3,15 @@ healthcheckPath = "/health"
 
 [build]
 builder = "RAILPACK"
-buildCommand = "npm install --omit=dev --legacy-peer-deps"
-startCommand = "node server.js"
+
+# Install system packages required by Chromium before build
+[phases.build]
+cmds = [
+  "apt-get update && apt-get install -y libnss3 libnspr4 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libxss1 libglib2.0-0 libatk-bridge2.0-0 libgtk-3-0"
+]
+
+[phases.install]
+cmds = ["npm install --omit=dev --legacy-peer-deps"]
+
+[start]
+cmd = "node server.js"
