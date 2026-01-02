@@ -3,5 +3,5 @@ healthcheckPath = "/health"
 
 [build]
 builder = "RAILPACK"
-buildCommand = "npm install --production --legacy-peer-deps"
+buildCommand = "npm install --omit=dev --legacy-peer-deps"
 startCommand = "node server.js"
