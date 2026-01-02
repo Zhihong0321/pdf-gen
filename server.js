@@ -93,8 +93,8 @@ app.post('/api/generate-pdf', async (req, res) => {
     await page.close();
 
     // Generate download URL
-    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const downloadUrl = `${baseUrl}/api/download/${pdfId}`;
+    const apiBaseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const downloadUrl = `${apiBaseUrl}/api/download/${pdfId}`;
 
     // Schedule cleanup (delete PDF after 5 minutes)
     setTimeout(() => {
