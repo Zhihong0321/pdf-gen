@@ -210,9 +210,25 @@ app.post('/api/generate-pdf', async (req, res) => {
     page.on('console', msg => console.log('Browser Console:', msg.text()));
     page.on('pageerror', error => console.error('Browser Error:', error.message));
     
-    // Set content with base URL for relative image paths
-    await page.setContent(html, {
-      url: baseUrl || 'about:blank',
+    // Inject <base> tag if baseUrl is provided
+    let htmlToLoad = html;
+    if (baseUrl) {
+      // Check if HTML already has a <head> tag
+      if (html.match(/<head/i)) {
+        htmlToLoad = html.replace(/(<head(?:\s+[^>]*)?>)/i, `$1<base href="${baseUrl}">`);
+      } else if (html.match(/<html/i)) {
+        htmlToLoad = html.replace(/(<html(?:\s+[^>]*)?>)/i, `$1<head><base href="${baseUrl}"></head>`);
+      } else {
+        // No <html> tag, prepend <base> at the beginning
+        htmlToLoad = `<base href="${baseUrl}">` + html;
+      }
+      console.log('✅ Injected <base> tag:', baseUrl);
+    } else {
+      console.log('⚠️  No baseUrl provided - relative image URLs may fail');
+    }
+    
+    // Set content with HTML that has <base> tag for resolving relative URLs
+    await page.setContent(htmlToLoad, {
       waitUntil: ['networkidle0', 'load', 'domcontentloaded'],
       timeout: 30000
     });
