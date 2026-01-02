@@ -1,2 +1,7 @@
 [deploy]
 healthcheckPath = "/health"
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install --production --legacy-peer-deps"
+startCommand = "node server.js"
