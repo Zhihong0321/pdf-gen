@@ -1,6 +1,5 @@
 const express = require('express');
 const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
@@ -40,11 +39,18 @@ async function initBrowser() {
   const isProduction = process.env.RAILWAY_ENVIRONMENT !== undefined;
   
   if (isProduction) {
-    // Use optimized Chromium on Railway
+    // Use system Chromium in Railway Docker container
+    const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
     browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
+      executablePath: chromiumPath,
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      ]
     });
   } else {
     // Use local Chrome in development
