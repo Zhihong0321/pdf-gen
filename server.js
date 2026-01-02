@@ -42,7 +42,12 @@ let lastRequest = {
   baseUrl: null,
   htmlLength: 0,
   hasImages: false,
-  imageTags: []
+  imageTags: [],
+  headers: {},
+  body: null,
+  imageLoadStatus: null,
+  curlCommand: null,
+  userAgent: null
 };
 
 async function initBrowser() {
@@ -86,7 +91,8 @@ app.get('/health', (req, res) => {
 app.get('/api/debug/last-request', (req, res) => {
   if (!lastRequest.timestamp) {
     return res.json({
-      message: 'No PDF requests received yet'
+      message: 'No PDF requests received yet',
+      hint: 'Make a POST request to /api/generate-pdf first'
     });
   }
 
@@ -94,14 +100,49 @@ app.get('/api/debug/last-request', (req, res) => {
     lastRequest: {
       timestamp: lastRequest.timestamp,
       htmlLength: lastRequest.htmlLength,
+      html: lastRequest.html, // FULL HTML - no truncation
       baseUrl: lastRequest.baseUrl,
       hasImages: lastRequest.hasImages,
       imageTags: lastRequest.imageTags,
-      htmlPreview: lastRequest.html.substring(0, 1000) + '...' // First 1000 chars
+      headers: lastRequest.headers,
+      body: lastRequest.body,
+      imageLoadStatus: lastRequest.imageLoadStatus, // Full image load details
+      curlCommand: lastRequest.curlCommand, // Reproducible test command
+      userAgent: lastRequest.userAgent
     },
-    note: 'Full HTML is truncated for display. Check server logs for complete details.'
+    diagnosis: {
+      imagesFound: lastRequest.hasImages,
+      imageCount: lastRequest.imageTags.length,
+      baseUrlProvided: !!lastRequest.baseUrl,
+      imagesLoaded: lastRequest.imageLoadStatus ? lastRequest.imageLoadStatus.filter(img => img.loaded).length : 0,
+      imagesFailed: lastRequest.imageLoadStatus ? lastRequest.imageLoadStatus.filter(img => !img.loaded).length : 0,
+      likelyIssue: diagnoseIssue(lastRequest)
+    },
+    note: 'FULL HTML and request details are now available for complete investigation'
   });
 });
+
+// Helper function to diagnose common issues
+function diagnoseIssue(req) {
+  if (!req.hasImages) return 'No images in HTML';
+  if (!req.baseUrl) return 'baseUrl NOT PROVIDED - relative image paths will fail';
+  if (!req.imageLoadStatus) return 'Image load status not available';
+  
+  const failedImages = req.imageLoadStatus.filter(img => !img.loaded);
+  if (failedImages.length === 0) return 'All images loaded successfully';
+  
+  // Check for common issues
+  for (let img of failedImages) {
+    if (!img.src.startsWith('http') && !img.src.startsWith('https')) {
+      return 'Relative image path without baseUrl or baseUrl not working';
+    }
+    if (img.naturalWidth === 0 && img.naturalHeight === 0) {
+      return 'Image failed to load (CORS, 404, or network error)';
+    }
+  }
+  
+  return 'Unknown issue - check image URLs and CORS settings';
+}
 
 // PDF generation endpoint
 app.post('/api/generate-pdf', async (req, res) => {
@@ -111,27 +152,53 @@ app.post('/api/generate-pdf', async (req, res) => {
     return res.status(400).json({ error: 'HTML content is required' });
   }
 
-  // Debug: Store last request details
+  // Debug: Store last request details - FULL CONTENT
+  const requestTimestamp = new Date().toISOString();
+  const imageTags = html.match(/<img[^>]+>/g) || [];
+  
+  // Generate equivalent curl command
+  const curlCommand = `curl -X POST ${req.protocol}://${req.get('host')}/api/generate-pdf \\
+  -H "Content-Type: application/json" \\
+  -H "User-Agent: ${req.get('user-agent') || 'unknown'}" \\
+  -d '{
+    "html": "${html.substring(0, 200)}...",
+    "baseUrl": "${baseUrl || 'NOT PROVIDED'}",
+    "options": ${JSON.stringify(options)}
+  }'`;
+
   lastRequest = {
-    timestamp: new Date().toISOString(),
-    html: html,
+    timestamp: requestTimestamp,
+    html: html, // FULL HTML stored
     baseUrl: baseUrl,
     htmlLength: html.length,
     hasImages: html.includes('<img'),
-    imageTags: html.match(/<img[^>]+>/g) || []
+    imageTags: imageTags,
+    headers: {
+      'content-type': req.get('content-type'),
+      'user-agent': req.get('user-agent'),
+      'host': req.get('host'),
+      'content-length': req.get('content-length')
+    },
+    body: { html, options, baseUrl }, // Full request body
+    imageLoadStatus: null, // Will be populated after loading
+    curlCommand: curlCommand,
+    userAgent: req.get('user-agent')
   };
 
   console.log('\n=== PDF Generation Request ===');
-  console.log('Time:', lastRequest.timestamp);
-  console.log('HTML Length:', lastRequest.htmlLength, 'characters');
-  console.log('Base URL:', lastRequest.baseUrl || 'NOT PROVIDED');
+  console.log('Time:', requestTimestamp);
+  console.log('HTML Length:', html.length, 'characters');
+  console.log('Base URL:', baseUrl || 'NOT PROVIDED');
   console.log('Has Images:', lastRequest.hasImages);
-  console.log('Image Tags Found:', lastRequest.imageTags.length);
-  if (lastRequest.imageTags.length > 0) {
-    lastRequest.imageTags.forEach((tag, i) => {
+  console.log('Image Tags Found:', imageTags.length);
+  if (imageTags.length > 0) {
+    imageTags.forEach((tag, i) => {
       console.log(`  Image ${i + 1}:`, tag);
     });
   }
+  console.log('Request Headers:', JSON.stringify(lastRequest.headers, null, 2));
+  console.log('\n=== Equivalent CURL Command ===');
+  console.log(curlCommand);
 
   const pdfId = uuidv4();
   const pdfPath = path.join(PDF_DIR, `${pdfId}.pdf`);
@@ -158,9 +225,13 @@ app.post('/api/generate-pdf', async (req, res) => {
         naturalWidth: img.naturalWidth,
         naturalHeight: img.naturalHeight,
         complete: img.complete,
-        error: img.error ? 'FAILED' : 'OK'
+        error: img.error ? 'FAILED' : 'OK',
+        loaded: img.complete && img.naturalWidth > 0 && img.naturalHeight > 0
       }));
     });
+    
+    // Store image load status
+    lastRequest.imageLoadStatus = imagesLoaded;
     
     console.log('\n=== Image Load Status ===');
     console.log('Total Images:', imagesLoaded.length);
@@ -169,6 +240,7 @@ app.post('/api/generate-pdf', async (req, res) => {
       console.log(`    src: ${img.src}`);
       console.log(`    Dimensions: ${img.naturalWidth}x${img.naturalHeight}`);
       console.log(`    Complete: ${img.complete}`);
+      console.log(`    Loaded: ${img.loaded}`);
       console.log(`    Status: ${img.error}`);
     });
 
