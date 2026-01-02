@@ -2,16 +2,11 @@
 healthcheckPath = "/health"
 
 [build]
-builder = "RAILPACK"
+builder = "NIXPACKS"
 
-# Install system packages required by Chromium before build
-[phases.build]
-cmds = [
-  "apt-get update && apt-get install -y libnss3 libnspr4 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libxss1 libglib2.0-0 libatk-bridge2.0-0 libgtk-3-0"
-]
-
-[phases.install]
-cmds = ["npm install --omit=dev --legacy-peer-deps"]
+# Install system packages required by Chromium
+[build.env]
+NIXPACKS_APT_DEPS = "libnss3 libnspr4 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libxss1 libglib2.0-0 libatk-bridge2.0-0 libgtk-3-0 libdbus-1-3 libpango-1.0-0 libcairo2 libasound2"
 
 [start]
 cmd = "node server.js"
